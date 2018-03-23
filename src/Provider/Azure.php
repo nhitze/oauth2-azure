@@ -18,9 +18,8 @@ class Azure extends AbstractProvider
     public $urlLogin = "https://login.microsoftonline.com/";
     public $pathAuthorize = "/oauth2/authorize";
     public $pathToken = "/oauth2/token";
-    
+
     public $scope = [];
-    public $scopeSeparator = " ";
 
     public $tenant = "common";
 
@@ -28,7 +27,7 @@ class Azure extends AbstractProvider
     public $resource = "";
 
     public $API_VERSION = "1.6";
-    
+
     public $authWithResource = true;
 
     public function __construct(array $options = [], array $collaborators = [])
@@ -46,7 +45,7 @@ class Azure extends AbstractProvider
     {
         return $this->urlLogin.$this->tenant.$this->pathToken;
     }
-    
+
     public function getAccessToken($grant, array $options = [])
     {
         if($this->authWithResource) {
@@ -62,8 +61,6 @@ class Azure extends AbstractProvider
                 $message = $data['odata.error']['message']['value'];
             } elseif (isset($data['error']['message'])) {
                 $message = $data['error']['message'];
-            } elseif ( isset($data['error']) && !is_array( $data['error'] )){
-                $message = $data['error'];
             } else {
                 $message = $response->getReasonPhrase();
             }
@@ -81,22 +78,17 @@ class Azure extends AbstractProvider
         return $this->scope;
     }
 
-    protected function getScopeSeparator()
-    {
-        return $this->scopeSeparator;
-    }
-    
     protected function createAccessToken(array $response, AbstractGrant $grant)
     {
         return new AccessToken($response, $this);
     }
-    
+
     public function getResourceOwner(\League\OAuth2\Client\Token\AccessToken $token)
     {
         $data = $token->getIdTokenClaims();
         return $this->createResourceOwner($data, $token);
     }
-    
+
     public function getResourceOwnerDetailsUrl(\League\OAuth2\Client\Token\AccessToken $token)
     {
         return null;
@@ -110,13 +102,13 @@ class Azure extends AbstractProvider
     public function getObjects($tenant, $ref, &$accessToken, $headers = [])
     {
         $objects = [];
-        
+
         $response = null;
 		do {
             if (filter_var($ref, FILTER_VALIDATE_URL) === FALSE) {
                 $ref = $tenant."/".$ref;
             }
-            
+
         	$response = $this->request('get', $ref, $accessToken, ['headers' => $headers]);
             $values = $response;
             if(isset($response['value'])) $values = $response['value'];
@@ -132,7 +124,7 @@ class Azure extends AbstractProvider
 				$ref = null;
 			}
 		} while ($ref != null);
-        
+
         return $objects;
     }
 
@@ -171,7 +163,7 @@ class Azure extends AbstractProvider
         return $this->wrapResponse($response);
     }
 
-    public function request($method, $ref, &$accessToken, $options = [])
+    private function request($method, $ref, &$accessToken, $options = [])
     {
         if ($accessToken->hasExpired()) {
             $accessToken = $this->getAccessToken('refresh_token', [
@@ -183,18 +175,11 @@ class Azure extends AbstractProvider
         if (filter_var($ref, FILTER_VALIDATE_URL) !== FALSE) {
             $url = $ref;
         } else {
-            if (strpos($this->urlAPI, "graph.windows.net") === TRUE) {
-                $tenant = 'common';
-                if (property_exists($this, 'tenant')) {
-                    $tenant = $this->tenant;
-                }
-                $ref = "$tenant/$ref";
+            $url = $this->urlAPI.$ref;
 
+            if (strpos($this->urlAPI, "graph.microsoft.com") === FALSE) {
                 $url .= (strrpos($url, "?") === false) ? "?" : "&";
                 $url .= "api-version=".$this->API_VERSION;
-            }
-            else {
-                $url = $this->urlAPI.$ref;
             }
         }
 
@@ -206,7 +191,7 @@ class Azure extends AbstractProvider
         }
 
         $request = $this->getAuthenticatedRequest($method, $url, $accessToken, $options);
-        $response = $this->getParsedResponse($request);
+        $response = $this->getResponse($request);
 
         return $response;
     }
@@ -221,12 +206,12 @@ class Azure extends AbstractProvider
 
         return $response;
     }
-    
+
     public function getClientId()
     {
         return $this->clientId;
     }
-    
+
     /**
      * Obtain URL for logging out the user.
      *
@@ -238,7 +223,7 @@ class Azure extends AbstractProvider
     {
         return 'https://login.microsoftonline.com/'.$this->tenant.'/oauth2/logout?post_logout_redirect_uri='.rawurlencode($post_logout_redirect_uri);
     }
-    
+
     /**
      * Validate the access token you received in your application.
      *
@@ -250,33 +235,33 @@ class Azure extends AbstractProvider
     {
         $keys = $this->getJwtVerificationKeys();
         $tokenClaims = (array)JWT::decode($accessToken, $keys, ['RS256']);
-        
-        if ($this->getClientId() != $tokenClaims['aud'] && $this->getClientId() != $tokenClaims['appid']) {
-            throw new \RuntimeException("The client_id / audience is invalid!");
+
+        if($this->getClientId() != $tokenClaims['aud']) {
+            throw new RuntimeException("The audience is invalid!");
         }
         if($tokenClaims['nbf'] > time() || $tokenClaims['exp'] < time()) {
             // Additional validation is being performed in firebase/JWT itself
-            throw new \RuntimeException("The id_token is invalid!");
+            throw new RuntimeException("The id_token is invalid!");
         }
-        
+
         if($this->tenant == "common") {
             $this->tenant = $tokenClaims['tid'];
-            
+
             $tenant = $this->getTenantDetails($this->tenant);
             if($tokenClaims['iss'] != $tenant['issuer']) {
-                throw new \RuntimeException("Invalid token issuer!");
+                throw new RuntimeException("Invalid token issuer!");
             }
         }
         else {
             $tenant = $this->getTenantDetails($this->tenant);
             if($tokenClaims['iss'] != $tenant['issuer']) {
-                throw new \RuntimeException("Invalid token issuer!");
+                throw new RuntimeException("Invalid token issuer!");
             }
         }
-        
+
         return $tokenClaims;
     }
-    
+
     /**
      * Get JWT verification keys from Azure Active Directory.
      *
@@ -286,9 +271,9 @@ class Azure extends AbstractProvider
     {
         $factory = $this->getRequestFactory();
         $request = $factory->getRequestWithOptions('get', 'https://login.windows.net/common/discovery/keys', []);
-        
-        $response = $this->getParsedResponse($request);
-        
+
+        $response = $this->getResponse($request);
+
         $keys = [];
         foreach ($response['keys'] as $i => $keyinfo) {
             if (isset($keyinfo['x5c']) && is_array($keyinfo['x5c'])) {
@@ -300,10 +285,10 @@ class Azure extends AbstractProvider
                 }
             }
         }
-        
+
         return $keys;
     }
-    
+
     /**
      * Get the specified tenant's details.
      *
@@ -314,10 +299,10 @@ class Azure extends AbstractProvider
     public function getTenantDetails($tenant)
     {
         $factory = $this->getRequestFactory();
-        $request = $factory->getRequestWithOptions('get', 'https://login.windows.net/'.$tenant.'/.well-known/openid-configuration', []);
-        
-        $response = $this->getParsedResponse($request);
-        
+        $request = $factory->getRequestWithOptions('get', 'https://login.windows.net/'.$tenant.'/v2.0/.well-known/openid-configuration', []);
+
+        $response = $this->getResponse($request);
+
         return $response;
     }
 }
